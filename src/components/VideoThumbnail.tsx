@@ -110,6 +110,26 @@ export function VideoThumbnail({ src, title, aspectRatio = "video", className = 
     if (isUnsupportedFormat) setIsInView(true); // still show the thumbnail even without a playable video
   }, [isUnsupportedFormat]);
 
+  // Pause videos that scroll out of view. On mobile, keeping 12+ videos
+  // decoding simultaneously is a primary cause of freezing and crashes, so
+  // we free the decoder as soon as the tile leaves the viewport.
+  useEffect(() => {
+    if (isUnsupportedFormat || isShowreel) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const visibilityObserver = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting && videoRef.current && !isFullscreen) {
+        videoRef.current.pause();
+        setIsPlaying(false);
+      } else if (entry.isIntersecting && videoRef.current && videoLoaded && !isPlaying && !isFullscreen) {
+        // Resume autoplay when scrolled back into view.
+        videoRef.current.play().catch(() => {});
+      }
+    }, { rootMargin: '100px', threshold: 0.01 });
+    visibilityObserver.observe(container);
+    return () => visibilityObserver.disconnect();
+  }, [isUnsupportedFormat, isShowreel, videoLoaded, isFullscreen, isPlaying]);
+
   const handleClick = async () => {
     if (isUnsupportedFormat) {
       // Can't play this format here — open the original file instead of showing a dead tile.

@@ -46,8 +46,9 @@ const range = (v: number, a: number, b: number) => clamp01((v - a) / (b - a));
  * index.css consumes them; nothing re-renders React, so dragging the
  * window stays at 60fps.
  */
-export function useHeroMorph() {
+export function useHeroMorph(disabled?: boolean) {
   useLayoutEffect(() => {
+    if (disabled) return;
     const root = document.documentElement;
     let frame = 0;
 
@@ -114,5 +115,5 @@ export function useHeroMorph() {
       window.removeEventListener('resize', schedule);
       window.removeEventListener('orientationchange', schedule);
     };
-  }, []);
+  }, [disabled]);
 }

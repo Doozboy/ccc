@@ -85,9 +85,25 @@ function App() {
   const [heroHidden, setHeroHidden] = useState(false);
   const heroRef = useRef<HTMLDivElement>(null);
 
-  // drives the desktop -> tablet hero morph (see src/hooks/useHeroMorph.ts)
-  useHeroMorph();
   const portfolioSectionRef = useRef<HTMLDivElement>(null);
+
+  // Detect mobile once at mount; update only on orientation change, not scroll.
+  // This avoids the constant re-render / layout thrash that a scroll listener causes.
+  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  useEffect(() => {
+    const onResize = () => setMobile(window.innerWidth < 768);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, []);
+
+  // drives the desktop -> tablet hero morph (see src/hooks/useHeroMorph.ts)
+  // Skip on mobile — it's a desktop-only effect and its resize listener
+  // adds unnecessary work on phones.
+  useHeroMorph(mobile);
 
   useEffect(() => {
     const heroImages = isMobile()
@@ -126,13 +142,14 @@ function App() {
   useEffect(() => {
     setMobileVH();
     const update = () => { setMobileVH(); };
+    // Removed 'scroll' listener — it caused a style recalc on every scroll
+    // frame, which is the #1 cause of mobile jank. Resize/orientation is
+    // enough since the only thing that changes --mobile-vh is viewport height.
     window.addEventListener('resize', update);
     window.addEventListener('orientationchange', update);
-    window.addEventListener('scroll', setMobileVH);
     return () => {
       window.removeEventListener('resize', update);
       window.removeEventListener('orientationchange', update);
-      window.removeEventListener('scroll', setMobileVH);
     };
   }, []);
 
@@ -140,15 +157,21 @@ function App() {
     ScrollTrigger.getAll().forEach(t => t.kill());
     if (!portfolioSectionRef.current) return;
 
-    const mobile = isMobile();
-    const desktopEls = gsap.utils.toArray(".desktop-image");
-    const desktopParallaxEls = desktopEls.filter((el: Element) => !el.classList.contains('no-parallax-y'));
-    gsap.timeline({
-      scrollTrigger: { trigger: portfolioSectionRef.current, start: "top bottom", end: "center top", scrub: 2 }
-    }).to(desktopParallaxEls, { y: 200, ease: "power1.out" });
+    const isMobileView = isMobile();
+
+    // Desktop-only: parallax on hero image layers. Skipping this on mobile
+    // avoids ScrollTrigger creating a scrubbed timeline that fights the
+    // mobile browser's scroll handling (a major source of freezing).
+    if (!isMobileView) {
+      const desktopEls = gsap.utils.toArray(".desktop-image");
+      const desktopParallaxEls = desktopEls.filter((el: Element) => !el.classList.contains('no-parallax-y'));
+      gsap.timeline({
+        scrollTrigger: { trigger: portfolioSectionRef.current, start: "top bottom", end: "center top", scrub: 2 }
+      }).to(desktopParallaxEls, { y: 200, ease: "power1.out" });
+    }
 
     gsap.to(portfolioSectionRef.current, {
-      y: mobile ? -900 : -900,
+      y: -900,
       scrollTrigger: { trigger: portfolioSectionRef.current, start: "top bottom", end: "bottom top", scrub: 2 }
     });
 
@@ -165,7 +188,7 @@ function App() {
     return () => { ScrollTrigger.getAll().forEach(t => t.kill()); };
   }, []);
 
-  const vh = (n: number) => window.innerWidth < 768 ? `calc(var(--mobile-vh) * ${n})` : `${n}vh`;
+  const vh = (n: number) => mobile ? `calc(var(--mobile-vh) * ${n})` : `${n}vh`;
 
   return (
     <div className={`relative ${ready ? 'hero-ready' : ''}`} style={{ opacity: ready ? 1 : 0, transition: 'opacity 0.7s cubic-bezier(0.4, 0, 0.2, 1)' }}>
@@ -205,96 +228,101 @@ function App() {
         className={`relative w-full overflow-hidden bg-transparent transition-opacity duration-500 ${heroHidden ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
         style={{ minHeight: vh(100), height: vh(100) }}
       >
-        {/* Mobile layers */}
-        <div className="md:hidden">
-          {mobileImages.map((img, index) => (
-            <ClickWrapper
-              key={index}
-              href={img.href}
-              scrollTo={img.scrollTo}
-              glowColor="rgba(201,168,76,0.3)"
-              noHover
-              className="mobile-image hero-image-layer fixed overflow-hidden"
-              style={{
-                ...(img.isStatic
-                  ? { inset: 0, width: '100%', height: '100%', zIndex: img.zIndex }
-                  : {
-                      inset: 0, width: '100%', height: '100%',
-                      zIndex: img.zIndex,
-                      animation: `slideUp 1s ease-out ${img.delay}s forwards`,
-                      transform: 'translateY(100vh)',
-                    })
-              }}
-            >
-              <img src={img.src} alt="" decoding="async" className="w-full h-full object-contain" />
-            </ClickWrapper>
-          ))}
+        {/* Mobile layers — only rendered on mobile to keep the 57KB desktop
+            hero HTML out of the mobile DOM (huge perf win on phones) */}
+        {mobile && (
+          <div className="md:hidden">
+            {mobileImages.map((img, index) => (
+              <ClickWrapper
+                key={index}
+                href={img.href}
+                scrollTo={img.scrollTo}
+                glowColor="rgba(201,168,76,0.3)"
+                noHover
+                className="mobile-image hero-image-layer fixed overflow-hidden"
+                style={{
+                  ...(img.isStatic
+                    ? { inset: 0, width: '100%', height: '100%', zIndex: img.zIndex }
+                    : {
+                        inset: 0, width: '100%', height: '100%',
+                        zIndex: img.zIndex,
+                        animation: `slideUp 1s ease-out ${img.delay}s forwards`,
+                        transform: 'translateY(100vh)',
+                      })
+                }}
+              >
+                <img src={img.src} alt="" decoding="async" className="w-full h-full object-contain" />
+              </ClickWrapper>
+            ))}
 
-          {/* Mobile-only hero design (mobile.html) */}
-          <HeroDesign
-            html={heroMobileHtml}
-            width={HERO_MOBILE.width}
-            height={HERO_MOBILE.height}
-            fit="contain"
-            className="mobile-image hero-image-layer fixed no-parallax-y hero-enter"
-            style={{ inset: 0, width: '100%', height: '100%', zIndex: 20 }}
-          />
-        </div>
+            {/* Mobile-only hero design (mobile.html) */}
+            <HeroDesign
+              html={heroMobileHtml}
+              width={HERO_MOBILE.width}
+              height={HERO_MOBILE.height}
+              fit="contain"
+              className="mobile-image hero-image-layer fixed no-parallax-y hero-enter"
+              style={{ inset: 0, width: '100%', height: '100%', zIndex: 20 }}
+            />
+          </div>
+        )}
 
-        {/* Desktop layers */}
-        <div className="hidden md:block">
-          {desktopImages.map((img, index) => (
-            <ClickWrapper
-              key={index}
-              href={img.href}
-              scrollTo={img.scrollTo}
-              glowColor="rgba(201,168,76,0.3)"
-              noHover
-              className={`desktop-image hero-image-layer fixed overflow-hidden ${img.isSmall ? 'name-hover' : ''}`}
-              style={{
-                ...(img.isSmall
-                  ? {
-                      top: -10, left: -30, width: '38%', maxWidth: 520, height: 'auto', zIndex: 50,
-                      animation: `slideUp 1s ease-out ${img.delay}s forwards`,
-                      transform: 'translateY(100vh)',
-                    }
-                  : {
-                      inset: 0, width: '100%', height: '100%',
-                      zIndex: img.zIndex ?? (img.isStatic ? 0 : index + 10),
-                      animation: img.isStatic ? 'none' : `slideUp 1s ease-out ${img.delay}s forwards`,
-                      transform: img.isStatic ? 'translateY(0)' : 'translateY(100vh)',
-                      pointerEvents: 'none',
-                    })
-              }}
-            >
-              <div className={`w-full h-full ${img.morph === 'figure' ? 'hero-rig-figure' : img.morph === 'me2' ? 'hero-me2' : ''}`}>
-                <img src={img.src} alt="" decoding="async" className={`${img.isSmall ? 'w-full h-auto' : 'w-full h-full object-contain'} ${img.src.includes('me 2') ? 'hero-img-me2' : 'hero-img-me'}`} />
-              </div>
-            </ClickWrapper>
-          ))}
+        {/* Desktop layers — only rendered on desktop */}
+        {!mobile && (
+          <div className="hidden md:block">
+            {desktopImages.map((img, index) => (
+              <ClickWrapper
+                key={index}
+                href={img.href}
+                scrollTo={img.scrollTo}
+                glowColor="rgba(201,168,76,0.3)"
+                noHover
+                className={`desktop-image hero-image-layer fixed overflow-hidden ${img.isSmall ? 'name-hover' : ''}`}
+                style={{
+                  ...(img.isSmall
+                    ? {
+                        top: -10, left: -30, width: '38%', maxWidth: 520, height: 'auto', zIndex: 50,
+                        animation: `slideUp 1s ease-out ${img.delay}s forwards`,
+                        transform: 'translateY(100vh)',
+                      }
+                    : {
+                        inset: 0, width: '100%', height: '100%',
+                        zIndex: img.zIndex ?? (img.isStatic ? 0 : index + 10),
+                        animation: img.isStatic ? 'none' : `slideUp 1s ease-out ${img.delay}s forwards`,
+                        transform: img.isStatic ? 'translateY(0)' : 'translateY(100vh)',
+                        pointerEvents: 'none',
+                      })
+                }}
+              >
+                <div className={`w-full h-full ${img.morph === 'figure' ? 'hero-rig-figure' : img.morph === 'me2' ? 'hero-me2' : ''}`}>
+                  <img src={img.src} alt="" decoding="async" className={`${img.isSmall ? 'w-full h-auto' : 'w-full h-full object-contain'} ${img.src.includes('me 2') ? 'hero-img-me2' : 'hero-img-me'}`} />
+                </div>
+              </ClickWrapper>
+            ))}
 
-          {/* Title — rendered behind me.webp */}
-          <HeroDesign
-            html={heroDesktopHtml}
-            width={HERO_DESKTOP.width}
-            height={HERO_DESKTOP.height}
-            fit="contain"
-            group
-            className="desktop-image hero-image-layer fixed no-parallax-y hero-design-text hide-testimonials hero-enter"
-            style={{ inset: 0, width: '100%', height: '100%', zIndex: 1 }}
-          />
+            {/* Title — rendered behind me.webp */}
+            <HeroDesign
+              html={heroDesktopHtml}
+              width={HERO_DESKTOP.width}
+              height={HERO_DESKTOP.height}
+              fit="contain"
+              group
+              className="desktop-image hero-image-layer fixed no-parallax-y hero-design-text hide-testimonials hero-enter"
+              style={{ inset: 0, width: '100%', height: '100%', zIndex: 1 }}
+            />
 
-          {/* Testimonials — rendered on top */}
-          <HeroDesign
-            html={heroDesktopHtml}
-            width={HERO_DESKTOP.width}
-            height={HERO_DESKTOP.height}
-            fit="contain"
-            group
-            className="desktop-image hero-image-layer fixed no-parallax-y hero-design-text hide-title hero-enter"
-            style={{ inset: 0, width: '100%', height: '100%', zIndex: 20 }}
-          />
-        </div>
+            {/* Testimonials — rendered on top */}
+            <HeroDesign
+              html={heroDesktopHtml}
+              width={HERO_DESKTOP.width}
+              height={HERO_DESKTOP.height}
+              fit="contain"
+              group
+              className="desktop-image hero-image-layer fixed no-parallax-y hero-design-text hide-title hero-enter"
+              style={{ inset: 0, width: '100%', height: '100%', zIndex: 20 }}
+            />
+          </div>
+        )}
 
         {/* Scroll indicator */}
         <div className="hero-enter absolute bottom-4 sm:bottom-6 md:bottom-8 left-0 right-0 z-[60] flex justify-center pointer-events-none">
